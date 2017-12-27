@@ -7,7 +7,13 @@ import numpy as np
 from jieba._compat import *
 import math
 
-import gensim.models.word2vec as w2v
+from pathlib import Path
+import json
+
+#import gensim.models.word2vec as w2v
+
+CORPORA_PATH = '/home/lc/ht_work/data/CORPORA_12.22'
+
 
 WEIGHT_COV = 0.1
 WEIGHT_LOC = 0.7
@@ -41,8 +47,9 @@ class UndirectWeightedGraph:
 	def _rand_method_0(self,preference):
 		total_pref = {}
 		#calc final preference
-		for w in list(set(self.graph.keys())):
-			total_pref[w]= self.pos_weight * preference['pos'][w] + self.loc_weight * preference['loc'][w]
+		if preference:
+			for w in list(set(self.graph.keys())):
+				total_pref[w]= self.pos_weight * preference['pos'][w] + self.loc_weight * preference['loc'][w]
 
 		ws = defaultdict(float)
 		outSum = defaultdict(float)
@@ -53,7 +60,7 @@ class UndirectWeightedGraph:
 			outSum[n] = sum((e[2] for e in out), 0.0)
 
 		pref={}
-		if not total_pref:
+		if total_pref:
 			s=float(sum(total_pref.values()))
 			for k,v in total_pref.items():#偏好概率归一化
 				pref[k]=float(v)/float(s)
@@ -65,7 +72,7 @@ class UndirectWeightedGraph:
 				s = 0
 				for e in self.graph[n]:
 					s += e[2] / outSum[e[1]] * ws[e[1]]
-				if pref=={}:
+				if not pref:
 					ws[n] = (1 - self.d) + self.d * s
 				else:
 					ws[n] = (1 - self.d)*pref[n] + self.d * s
@@ -112,12 +119,14 @@ class UndirectWeightedGraph:
 					w_mat[i][e[1]] += w_freq * pref_freq[e[1]] / sumc[i]
 					w_mat[i][e[1]] += w_pos * pref_pos[e[1]] / sump[i]
 
+			sorted_i_keys = sorted(w_mat.keys())
 			# w_mat 转移矩阵概率归一化
-			for i in w_mat.keys():
+			for i in sorted_i_keys:
 				s = 0.0
-				for j in w_mat[i].keys():
+				sorted_j_keys = sorted(w_mat[i].keys())
+				for j in sorted_j_keys:
 					s += w_mat[i][j]
-				for j in w_mat[i].keys():
+				for j in sorted_j_keys:
 					w_mat[i][j] = w_mat[i][j] / s
 
 
@@ -153,14 +162,15 @@ class UndirectWeightedGraph:
 				w_mat[n][e[1]] += WEIGHT_W2V * model.similarity(n,e[1]) / outSum_sim[n]
 				w_mat[n][e[1]] += WEIGHT_ORG * e[2] / outSum[n]
 
+		sorted_i_keys = sorted(w_mat.keys())
 		# w_mat 转移矩阵概率归一化
-		for i in w_mat.keys():
+		for i in sorted_i_keys:
 			s = 0.0
-			for j in w_mat[i].keys():
+			sorted_j_keys = sorted(w_mat[i].keys())
+			for j in sorted_j_keys:
 				s += w_mat[i][j]
-			for j in w_mat[i].keys():
+			for j in sorted_j_keys:
 				w_mat[i][j] = w_mat[i][j] / s
-
 
 		sorted_keys = sorted(self.graph.keys())
 		for x in xrange(30):  # 10 iters
@@ -177,7 +187,7 @@ class UndirectWeightedGraph:
 	def rank(self,preference=None,method=0):
 		# method : 0  -->  use
 		result = None
-		if method == 0:
+		if method == 0 or method == -1:
 			result = self._rand_method_0(preference)
 		elif method == 1:
 			result = self._rank_method_1(preference)
@@ -213,6 +223,7 @@ class TextRank():
 		self.final_pref = {}
 
 		self.words = []
+		self.wordpairs = []
 
 		#method3 : w2v
 		self.model = None
@@ -236,52 +247,74 @@ class TextRank():
 		else:
 			return False
 
-	def calc_preference(self,news_dict,method=0):
-		if not newsdict['first']:
+	def calc_wordpairs(self,newsdict):
+		if not newsdict['FIRST_SENTENCE']:
 			first = ""
 		else:
-			first = newsdict['first']
-		if not newsdict['last']:
+			first = newsdict['FIRST_SENTENCE']
+		if not newsdict['LAST_SENTENCE']:
 			last = ""
 		else:
-			last = newsdict['last']
+			last = newsdict['LAST_SENTENCE']
 
-		whole_text = first + newsdict['content'] + last
-
+		whole_text = first + newsdict['MID_SENTENCE'] + last
 		if not whole_text:
 			raise ValueError('news content is None!')
 
-		if method == 0:
-			for pair in whole_text.split(' '):
+		title_str = ""
+		if newsdict['TITLE']:
+			title = []
+			for pair in newsdict['TITLE'].split(' '):
 				if len(pair.split("/")) == 2:
 					term,pos = pair.split("/")
-					if TextRank.is_retain(term, pos):
-						self.words.append(term)
-						# calc pos preference
-						if self.pos_pref.get(term) == None:
-							self.pos_pref[term] = []
-						self.pos_pref[term].append(self._get_pos_preference(pos))
-						# calc loc preference
-						if self.loc_pref.get(term) == None:
-							self.loc_pref[term] = self._get_loc_preference_method0(term,news_dict['title'],news_dict['first'],news_dict['last'])
+					title.append(term)
+			title_str = "".join(title)
+
+		for pair in whole_text.split(' '):
+			if len(pair.split("/")) == 2:
+				term,pos = pair.split("/")
+				term_info = {}
+				if TextRank.is_retain(term, pos):
+					term_info['pos'] = pos
+					if first and term in first:
+						term_info['first'] = True
+					else:
+						term_info['first'] = False
+					if last and term in last:
+						term_info['last'] = True
+					else:
+						term_info['last'] = False
+					if title_str and term in title_str:
+						term_info['title'] = True
+					else:
+						term_info['title'] = False
+					self.wordpairs.append((term,term_info))
+					self.words.append(term)
+
+	def calc_preference(self,method=0):
+		if method == 0:
+			for term,info in self.wordpairs:
+				# calc pos preference
+				if self.pos_pref.get(term) == None:
+					self.pos_pref[term] = []
+				self.pos_pref[term].append(self._get_pos_preference(info['pos']))
+				# calc loc preference
+				if self.loc_pref.get(term) == None:
+					self.loc_pref[term] = self._get_loc_preference_method0(term,info['title'],info['first'],info['last'])
 
 		elif method == 1:
-			for pair in whole_text.split(' '):
-				if len(pair.split("/")) == 2:
-					term,pos = pair.split("/")
-					if TextRank.is_retain(term, pos):
-						self.words.append(term)
-						# calc pos preference
-						if self.pos_pref.get(term) == None:
-							self.pos_pref[term] = []
-						self.pos_pref[term].append(self._get_pos_preference(pos))
-						# calc loc preference
-						if self.loc_pref.get(term) == None:
-							self.loc_pref[term] = self._get_loc_preference_method1(term,news_dict['title'],news_dict['first'],news_dict['last'])
-						# calc freq preference
-						if self.freq_pref.get(term) == None:
-							self.freq_pref[term] = 0
-						self.freq_pref[term] += 1
+			for term,info in self.wordpairs:
+				# calc pos preference
+				if self.pos_pref.get(term) == None:
+					self.pos_pref[term] = []
+				self.pos_pref[term].append(self._get_pos_preference(info['pos']))
+				# calc loc preference
+				if self.loc_pref.get(term) == None:
+					self.loc_pref[term] = self._get_loc_preference_method1(term,info['title'],info['first'],info['last'])
+				# calc freq preference
+				if self.freq_pref.get(term) == None:
+					self.freq_pref[term] = 0
+					self.freq_pref[term] += 1
 
 					'''
 					if self.freq_pref.get(term) == None:
@@ -292,13 +325,17 @@ class TextRank():
 		for term in self.freq_pref.keys():
 			self.freq_pref[term] = self.freq_pref[term] / len(self.words)
 		'''
-		for w in list(set(self.words)):
-			self.pos_pref[w] = np.array(self.pos_pref[w]).mean()
+		if self.pos_pref:
+			for w in list(set(self.words)):
+				self.pos_pref[w] = np.array(self.pos_pref[w]).mean()
 
 		#return self.final_pref
-		self.final_pref['pos'] = self.pos_pref
-		self.final_pref['loc'] = self.loc_pref
-		self.final_pref['freq'] = self.freq_pref
+		if self.pos_pref:
+			self.final_pref['pos'] = self.pos_pref
+		if self.loc_pref:
+			self.final_pref['loc'] = self.loc_pref
+		if self.freq_pref:
+			self.final_pref['freq'] = self.freq_pref
 
 	def _get_pos_preference(self,pos):
 		#根据不同的词性给予词汇不同的分数，分数来源参考"基于语义的中文文本关键词提取算法"
@@ -316,11 +353,11 @@ class TextRank():
 	def _get_loc_preference_method1(self,term,title,first_sentences,last_sentences):
 		# 根据是否在标题中出现，给一个权重
 		i = 1.0
-		if title and term in title:
+		if title:
 			i = LAMBDA_TITLE
-		if first_sentences and term in " ".join(first_sentences):
+		if first_sentences:
 			i = LAMBDA_FIRST
-		if last_sentences and term in " ".join(last_sentences):
+		if last_sentences:
 			i = LAMBDA_LAST
 		return i
 
@@ -328,11 +365,11 @@ class TextRank():
 	def _get_loc_preference_method0(self,term,title,first_sentences,last_sentences):
 		#根据词汇出现的位置打分（标题，（段）首句，（段）未句）
 		s=0.3
-		if title and term in title:
+		if title:
 			s += 0.4
-		if first_sentences and term in " ".join(first_sentences):
+		if first_sentences:
 			s += 0.2
-		if last_sentences and term in " ".join(last_sentences):
+		if last_sentences:
 			s += 0.1
 		return s
 
@@ -363,6 +400,18 @@ class TextRank():
 			return tags[:topK]
 		else:
 			return tags
+
+def preprocess(srcdir):
+	if srcdir:
+		p = Path(srcdir)
+		# self.total_count = len(list(p.glob("**/*.json")))
+		for jsfile in p.glob("**/*.json"):
+			with open(str(jsfile), 'r') as fr:
+					text = fr.read()
+					yield json.loads(text, strict=False)
+	return
+
+
 
 def evaluate(newsdict,keywords,target_keywords):
 	if not newsdict['first']:
@@ -436,6 +485,16 @@ def calc_H_pref(all_dicts):
 
 	return pref
 
+def calc_eval_result(eval_list):
+	sump = sumr = sumf = 0.0
+	count = len(eval_result)
+
+	for result in eval_result:
+		sump += result[0]
+		sumr += result[1]
+		sumf += result[2]
+
+	return (sump/count , sumr/count , sumf/count)
 
 
 if __name__=="__main__":
@@ -453,37 +512,46 @@ if __name__=="__main__":
 	# content :
 	# keywords :
 
+	'''
 	newsdict = {}
-	newsdict['id'] = 1
-	newsdict['title'] = None
-	newsdict['first'] = None
-	newsdict['last'] = None
-	newsdict['content'] = text
-	newsdict['keywords'] = ['净利','股权','股东','基本面','胡扯']
+	newsdict['OBJECT_ID'] = 1
+	newsdict['TITLE'] = None
+	newsdict['FIRST_SENTENCE'] = None
+	newsdict['MID_SENTENCE'] = None
+	newsdict['LAST_SENTENCE'] = text
+	newsdict['KEYWORDS'] = ['净利','股权','股东','基本面','胡扯']
+	#u'TITLE', u'URL', u'LAST_SENTENCE', u'OBJECT_ID', u'FIRST_SENTENCE', u'SOURCE', u'MID_SENTENCE', u'DATE', u'KEYWORDS', u'SECTIONS'
+	'''
 
-	all_dicts = []
-	all_dicts.append(newsdict)
+	approach = -1
+	topK = 10
 
-	approach = 1
-
+	eval_result = []
 	TextRank.set_stopwords('/home/lc/ht_work/news_textrank/stopwords_wz.txt')
 
-	tr=TextRank()
-	tr.calc_preference(newsdict,approach)
-	'''
-	if approach == 1:
-		H_pref = calc_H_pref(all_dicts)
-		tr.set_freq_pref(H_pref)
-	'''
+	js_gen = preprocess(CORPORA_PATH)
+	process_count = 0
+	for newsdict in js_gen:
+		tr=TextRank()
+		tr.calc_wordpairs(newsdict)
+		tr.calc_preference(approach)
+		'''
+		if approach == 1:
+			H_pref = calc_H_pref(all_dicts)
+			tr.set_freq_pref(H_pref)
+		'''
 
-	keywords = tr.textrank(newsdict,topK=10,method=approach)
+		keywords = tr.textrank(newsdict,topK=topK,method=approach)
+		process_count += 1
+		print " ".join(keywords)
 
-	if newsdict['keywords']:
-		res = evaluate(newsdict,keywords,newsdict['keywords'])
+		if newsdict['KEYWORDS']:
+			res = evaluate(newsdict,keywords,newsdict['keywords'])
+			eval_result.append(res)
+			print "precision : %f \t recall : %f \t f : %f\n" % (res[0],res[1],res[2])
 
-	print " ".join(keywords)
-	print "precision : %f \t recall : %f \t f : %f\n" % (res[0],res[1],res[2])
-
-
+	print "process %l files , %l files with keywords to evaluate\n" % (process_count,len(eval_result))
+	calc_eval_result(eval_result)
+	print "final result ==> precision : %f \t recall : %f \t f : %f\n" % (res[0],res[1],res[2])
 
 
