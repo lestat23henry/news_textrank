@@ -10,34 +10,42 @@ import math
 from pathlib import Path
 import json
 
-#import gensim.models.word2vec as w2v
+import gensim.models.word2vec as w2v
 
-CORPORA_PATH = '/home/lc/ht_work/data/CORPORA_12.22'
+CORPORA_PATH = '/home/lc/ht_work/data/all_news'
 
-
+#------- method 1 ---------------
 WEIGHT_COV = 0.1
-WEIGHT_LOC = 0.7
+WEIGHT_LOC = 0.8
 WEIGHT_POS = 0.1
-WEIGHT_FREQ = 0.1
+WEIGHT_FREQ = 0.0
+LAMBDA_TITLE = 40
+LAMBDA_FIRST = 10
+LAMBDA_LAST = 10
 
-
+#------- method 2 ---------------
 WEIGHT_W2V = 0.5
 WEIGHT_ORG = 0.5
-MODEL_PATH = "./hexun.model"
+MODEL_PATH = "./news.model"
 
-LAMBDA_TITLE = 30
-LAMBDA_FIRST = 20
-LAMBDA_LAST = 15
-
+#------- method 0 ---------------
+WEIGHT_LOC_RAND = 1.0
+WEIGHT_POS_RAND = 0.0
 
 class UndirectWeightedGraph:
 	d = 0.85
 
-	def __init__(self):
+	def __init__(self,method=0):
 		self.graph = defaultdict(list)
-		self.pos_weight = WEIGHT_POS
-		self.loc_weight = WEIGHT_LOC
-		self.freq_weight = WEIGHT_FREQ
+
+		if method == 0:
+			self.pos_weight = WEIGHT_POS_RAND
+			self.loc_weight = WEIGHT_LOC_RAND
+		elif method == 1:
+			self.pos_weight = WEIGHT_POS
+			self.loc_weight = WEIGHT_LOC
+			self.freq_weight = WEIGHT_FREQ
+			self.cov_weight = WEIGHT_COV
 
 	def addEdge(self, start, end, weight):
 		# use a tuple (start, end, weight) instead of a Edge object
@@ -82,10 +90,10 @@ class UndirectWeightedGraph:
 	def _rank_method_1(self,preference):
 		ws = defaultdict(float)
 
-		w_cov = WEIGHT_COV
-		w_loc = WEIGHT_LOC
-		w_pos = WEIGHT_POS
-		w_freq = WEIGHT_FREQ
+		w_cov = self.cov_weight
+		w_loc = self.loc_weight
+		w_pos = self.pos_weight
+		w_freq = self.freq_weight
 
 		w_mat = {}
 
@@ -183,7 +191,6 @@ class UndirectWeightedGraph:
 
 		return ws
 
-
 	def rank(self,preference=None,method=0):
 		# method : 0  -->  use
 		result = None
@@ -248,21 +255,16 @@ class TextRank():
 			return False
 
 	def calc_wordpairs(self,newsdict):
-		if not newsdict['FIRST_SENTENCE']:
-			first = ""
-		else:
-			first = newsdict['FIRST_SENTENCE']
-		if not newsdict['LAST_SENTENCE']:
-			last = ""
-		else:
-			last = newsdict['LAST_SENTENCE']
-
-		whole_text = first + newsdict['MID_SENTENCE'] + last
+		first = newsdict.get('FIRST_SENTENCE',"")
+		last = newsdict.get('LAST_SENTENCE',"")
+		mid = newsdict.get('MID_SENTENCE',"")
+		whole_text = first + mid + last
 		if not whole_text:
-			raise ValueError('news content is None!')
+			print 'news is none!\n'
+			return False
 
 		title_str = ""
-		if newsdict['TITLE']:
+		if newsdict.has_key('TITLE') and newsdict['TITLE']:
 			title = []
 			for pair in newsdict['TITLE'].split(' '):
 				if len(pair.split("/")) == 2:
@@ -290,6 +292,7 @@ class TextRank():
 						term_info['title'] = False
 					self.wordpairs.append((term,term_info))
 					self.words.append(term)
+		return True
 
 	def calc_preference(self,method=0):
 		if method == 0:
@@ -364,9 +367,9 @@ class TextRank():
 
 	def _get_loc_preference_method0(self,term,title,first_sentences,last_sentences):
 		#根据词汇出现的位置打分（标题，（段）首句，（段）未句）
-		s=0.3
+		s=0.0
 		if title:
-			s += 0.4
+			s += 0.7
 		if first_sentences:
 			s += 0.2
 		if last_sentences:
@@ -380,7 +383,7 @@ class TextRank():
 
 		#final_pref = self._calc_preference(wordpair)
 
-		g = UndirectWeightedGraph()
+		g = UndirectWeightedGraph(method)
 		cm = defaultdict(int)
 		for i, w in enumerate(self.words):
 			for j in xrange(i + 1, i + self.span):
@@ -414,31 +417,36 @@ def preprocess(srcdir):
 
 
 def evaluate(newsdict,keywords,target_keywords):
-	if not newsdict['first']:
-		first = ""
-	else:
-		first = newsdict['first']
-	if not newsdict['last']:
-		last = ""
-	else:
-		last = newsdict['last']
+	first = newsdict.get('FIRST_SENTENCE',"")
+	last = newsdict.get('LAST_SENTENCE',"")
+	mid = newsdict.get('MID_SENTENCE',"")
 
-	N = len(newsdict['content']) + len(first) + len(last)
+	N = len(mid) + len(first) + len(last)
+
+	keywords_list = None
+	if '|' in target_keywords:
+		keywords_list = target_keywords.split('|')
+	else:
+		keywords_list = target_keywords
 
 	tp = fp = tn = fn = 0.0
 	for kw in keywords:
-		if kw in target_keywords:
+		if kw in keywords_list:
 			tp += 1
 		else:
 			fp += 1
 
-	tn = N - len(target_keywords) - fp
-	fn = len(target_keywords) - tp
+
+	tn = N - len(keywords_list) - fp
+	fn = len(keywords_list) - tp
 
 	pre = tp / (tp + fp)
 	rec = tp / (tp + fn)
 
-	f = pre*rec / (2*(pre + rec))
+	if 0.0 < pre < 0.01 or 0.0 < rec < 0.1:
+		print 'tp is %d,tp+fn is %d\n' % (tp,tp+fn)
+
+	f = pre*rec*2 / (pre + rec + 0.01)
 
 	return (pre,rec,f)
 
@@ -487,9 +495,9 @@ def calc_H_pref(all_dicts):
 
 def calc_eval_result(eval_list):
 	sump = sumr = sumf = 0.0
-	count = len(eval_result)
+	count = len(eval_list)
 
-	for result in eval_result:
+	for result in eval_list:
 		sump += result[0]
 		sumr += result[1]
 		sumf += result[2]
@@ -523,7 +531,7 @@ if __name__=="__main__":
 	#u'TITLE', u'URL', u'LAST_SENTENCE', u'OBJECT_ID', u'FIRST_SENTENCE', u'SOURCE', u'MID_SENTENCE', u'DATE', u'KEYWORDS', u'SECTIONS'
 	'''
 
-	approach = -1
+	approach = 0
 	topK = 10
 
 	eval_result = []
@@ -532,26 +540,32 @@ if __name__=="__main__":
 	js_gen = preprocess(CORPORA_PATH)
 	process_count = 0
 	for newsdict in js_gen:
-		tr=TextRank()
-		tr.calc_wordpairs(newsdict)
-		tr.calc_preference(approach)
-		'''
-		if approach == 1:
-			H_pref = calc_H_pref(all_dicts)
-			tr.set_freq_pref(H_pref)
-		'''
+		try:
+			tr=TextRank()
+			ret = tr.calc_wordpairs(newsdict)
+			if not ret:
+				continue
+			tr.calc_preference(approach)
+			'''
+			if approach == 1:
+				H_pref = calc_H_pref(all_dicts)
+				tr.set_freq_pref(H_pref)
+			'''
+			keywords = tr.textrank(newsdict,topK=topK,method=approach)
+			print " ".join(keywords)
 
-		keywords = tr.textrank(newsdict,topK=topK,method=approach)
-		process_count += 1
-		print " ".join(keywords)
+			if newsdict.has_key('KEYWORDS') and newsdict['KEYWORDS']:
+				res = evaluate(newsdict,keywords,newsdict['KEYWORDS'])
+				eval_result.append(res)
+				print "precision : %f \t recall : %f \t f : %f\n" % (res[0],res[1],res[2])
 
-		if newsdict['KEYWORDS']:
-			res = evaluate(newsdict,keywords,newsdict['keywords'])
-			eval_result.append(res)
-			print "precision : %f \t recall : %f \t f : %f\n" % (res[0],res[1],res[2])
+			process_count += 1
+		except Exception as e:
+			print e.message
+			continue
 
-	print "process %l files , %l files with keywords to evaluate\n" % (process_count,len(eval_result))
-	calc_eval_result(eval_result)
-	print "final result ==> precision : %f \t recall : %f \t f : %f\n" % (res[0],res[1],res[2])
+	print "process %Ld files , %Ld files with keywords to evaluate\n" % (process_count,len(eval_result))
+	final_res = calc_eval_result(eval_result)
+	print "final result ==> precision : %f \t recall : %f \t f : %f\n" % (final_res[0],final_res[1],final_res[2])
 
 
