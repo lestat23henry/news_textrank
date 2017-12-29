@@ -15,11 +15,11 @@ import gensim.models.word2vec as w2v
 CORPORA_PATH = '/home/lc/ht_work/data/all_news'
 
 #------- method 1 ---------------
-WEIGHT_COV = 0.1
-WEIGHT_LOC = 0.8
-WEIGHT_POS = 0.1
+WEIGHT_COV = 0.4
+WEIGHT_LOC = 0.6
+WEIGHT_POS = 0.0
 WEIGHT_FREQ = 0.0
-LAMBDA_TITLE = 40
+LAMBDA_TITLE = 60
 LAMBDA_FIRST = 10
 LAMBDA_LAST = 10
 
@@ -531,7 +531,7 @@ if __name__=="__main__":
 	#u'TITLE', u'URL', u'LAST_SENTENCE', u'OBJECT_ID', u'FIRST_SENTENCE', u'SOURCE', u'MID_SENTENCE', u'DATE', u'KEYWORDS', u'SECTIONS'
 	'''
 
-	approach = 0
+	approach = 1
 	topK = 10
 
 	eval_result = []
