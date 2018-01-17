@@ -9,10 +9,17 @@ import math
 
 from pathlib import Path
 import json
+import codecs
 
 import gensim.models.word2vec as w2v
+from collections import Counter
+from multiprocessing import cpu_count
 
-CORPORA_PATH = '/home/lc/ht_work/data/all_news'
+import vector_clustering
+
+CORPORA_PATH = '/home/lc/ht_work/data/all_news_5_bak'
+TMPWORDFILE = '/tmp/tmpwords'
+MODELPATH_3 = "/home/lc/ht_work/news_textrank/news3_model"
 
 #------- method 1 ---------------
 WEIGHT_COV = 0.4
@@ -26,7 +33,7 @@ LAMBDA_LAST = 10
 #------- method 2 ---------------
 WEIGHT_W2V = 0.5
 WEIGHT_ORG = 0.5
-MODEL_PATH = "./news.model"
+MODEL_PATH = "/home/lc/ht_work/data/200_0_0_1/news.model"
 
 #------- method 0 ---------------
 WEIGHT_LOC_RAND = 1.0
@@ -34,6 +41,7 @@ WEIGHT_POS_RAND = 0.0
 
 class UndirectWeightedGraph:
 	d = 0.85
+	model = None
 
 	def __init__(self,method=0):
 		self.graph = defaultdict(list)
@@ -51,6 +59,17 @@ class UndirectWeightedGraph:
 		# use a tuple (start, end, weight) instead of a Edge object
 		self.graph[start].append((start, end, weight))
 		self.graph[end].append((end, start, weight))
+
+	@classmethod
+	def set_model(cls,modelpath):
+		try:
+			print 'load word2vec model at %s start!\n' % modelpath
+			cls.model = w2v.Word2Vec.load(modelpath)
+			print 'load word2vec model at %s end!\n' % modelpath
+		except Exception,e:
+			print e.message
+
+		return True
 
 	def _rand_method_0(self,preference):
 		total_pref = {}
@@ -150,8 +169,6 @@ class UndirectWeightedGraph:
 		return ws
 
 	def _rank_method_2(self,preference):
-		model = w2v.Word2Vec.load(MODEL_PATH)
-
 		ws = defaultdict(float)
 		outSum = defaultdict(float)
 		outSum_sim = defaultdict(float)
@@ -159,16 +176,31 @@ class UndirectWeightedGraph:
 		wsdef = 1.0 / (len(self.graph) or 1.0)
 		for n, out in self.graph.items():
 			ws[n] = wsdef
+			outSum_sim[n] = 0.0
 			outSum[n] = sum((e[2] for e in out), 0.0)
-			outSum_sim[n] = sum((model.similarity(n,e[1]) for e in out), 0.0)
+			for e in out:
+				try:
+					outSum_sim[n] += self.model.similarity(n,e[1])
+				except Exception,e1:
+					#print e1.message
+					outSum_sim[n] += 0.5
+					continue
 
 		w_mat = {}
 		for n, out in self.graph.items():
 			w_mat[n] = {}
 			for e in out:
-				w_mat[n][e[1]] = 0.0
-				w_mat[n][e[1]] += WEIGHT_W2V * model.similarity(n,e[1]) / outSum_sim[n]
-				w_mat[n][e[1]] += WEIGHT_ORG * e[2] / outSum[n]
+				try:
+					if n == u'ARM':
+						print 'ARM'
+					w_mat[n][e[1]] = 0.0
+					w_mat[n][e[1]] += WEIGHT_W2V * self.model.similarity(n,e[1]) / outSum_sim[n]
+					w_mat[n][e[1]] += WEIGHT_ORG * e[2] / outSum[n]
+				except Exception,e1:
+					#print e1.message
+					w_mat[n][e[1]] += WEIGHT_W2V * 0.5 / outSum_sim[n]
+					w_mat[n][e[1]] += WEIGHT_ORG * e[2] / outSum[n]
+					continue
 
 		sorted_i_keys = sorted(w_mat.keys())
 		# w_mat 转移矩阵概率归一化
@@ -231,9 +263,6 @@ class TextRank():
 
 		self.words = []
 		self.wordpairs = []
-
-		#method3 : w2v
-		self.model = None
 
 	@classmethod
 	def set_stopwords(cls,stopwordfile):
@@ -369,9 +398,9 @@ class TextRank():
 		#根据词汇出现的位置打分（标题，（段）首句，（段）未句）
 		s=0.0
 		if title:
-			s += 0.7
+			s += 0.8
 		if first_sentences:
-			s += 0.2
+			s += 0.1
 		if last_sentences:
 			s += 0.1
 		return s
@@ -403,6 +432,74 @@ class TextRank():
 			return tags[:topK]
 		else:
 			return tags
+
+
+class w2v_extract():
+
+	def __init__(self,tmpwordsfile):
+		self.model = None
+		self.all_words_file = tmpwordsfile
+
+	def pre_train(self,doc_gen):
+		with codecs.open(self.all_words_file,'w','utf-8') as fw:
+			for newsdict in doc_gen:
+				first = newsdict.get('FIRST_SENTENCE',"")
+				last = newsdict.get('LAST_SENTENCE',"")
+				mid = newsdict.get('MID_SENTENCE',"")
+				title = newsdict.get('TITLE',"")
+				whole_text = title + first + mid + last
+				if not whole_text:
+					print 'news is none!\n'
+					continue
+
+				for pair in whole_text.split(' '):
+					if len(pair.split("/")) == 2:
+						term,pos = pair.split("/")
+						if TextRank.is_retain(term, pos):
+							fw.write(term + ' ')
+				fw.write('\n')
+
+	def train_model(self,modelpath,retrain=True):
+		if not retrain:
+			self.model = w2v.Word2Vec.load(modelpath)
+		else:
+			# must use skip gram with softmax
+			self.model = w2v.Word2Vec(w2v.LineSentence(self.all_words_file),sg=1,hs=1,negative=0,size=200,window=5,min_count=5,workers=cpu_count())
+			self.model.save(modelpath)
+
+		return True
+
+	def _predict_proba(self,oword, iword):
+		iword_vec = self.model[iword]
+		oword = self.model.wv.vocab[oword]
+		oword_l = self.model.syn1[oword.point].T
+		dot = np.dot(iword_vec, oword_l)
+		lprob = -sum(np.logaddexp(0, -dot) + oword.code * dot)
+		return lprob
+
+	def keywords(self,newsdict,topK=10):
+		wordlist = []
+		first = newsdict.get('FIRST_SENTENCE',"")
+		last = newsdict.get('LAST_SENTENCE',"")
+		mid = newsdict.get('MID_SENTENCE',"")
+		title = newsdict.get('TITLE',"")
+		whole_text = title + first + mid + last
+		if not whole_text:
+			print 'news is none!\n'
+			return None
+
+		for pair in whole_text.split(' '):
+			if len(pair.split("/")) == 2:
+				term,pos = pair.split("/")
+				if TextRank.is_retain(term, pos):
+					wordlist.append(term)
+
+		s = [w for w in wordlist if w in self.model]
+		ws = {w: sum([self._predict_proba(u, w) for u in s]) for w in s}
+
+		kw_pairs = Counter(ws).most_common(n=topK)
+		return [w for w,v in kw_pairs]
+
 
 def preprocess(srcdir):
 	if srcdir:
@@ -531,41 +628,102 @@ if __name__=="__main__":
 	#u'TITLE', u'URL', u'LAST_SENTENCE', u'OBJECT_ID', u'FIRST_SENTENCE', u'SOURCE', u'MID_SENTENCE', u'DATE', u'KEYWORDS', u'SECTIONS'
 	'''
 
-	approach = 1
-	topK = 10
-
+	approach = 0
+	topK = 5
+	process_count = 0
 	eval_result = []
+
+	#for kmeans
+	cluster_num = 100
+	iter_max = 30
+	prt_num = 2
+
 	TextRank.set_stopwords('/home/lc/ht_work/news_textrank/stopwords_wz.txt')
+	if approach == 2:
+		UndirectWeightedGraph.set_model(MODEL_PATH)
 
 	js_gen = preprocess(CORPORA_PATH)
-	process_count = 0
-	for newsdict in js_gen:
-		try:
-			tr=TextRank()
-			ret = tr.calc_wordpairs(newsdict)
-			if not ret:
+
+	keywords_list = []
+
+	if approach == 3:
+		w2v_new = w2v_extract(TMPWORDFILE)
+		#w2v_new.pre_train(js_gen)
+		w2v_new.train_model(MODELPATH_3,retrain=False)
+		js_gen_1 = preprocess(CORPORA_PATH)
+		for newsdict in js_gen_1:
+			try:
+				keywords = w2v_new.keywords(newsdict,topK=topK)
+				print " ".join(keywords)
+
+				if newsdict.has_key('KEYWORDS') and newsdict['KEYWORDS']:
+					res = evaluate(newsdict,keywords,newsdict['KEYWORDS'])
+					eval_result.append(res)
+					print "precision : %f \t recall : %f \t f : %f\n" % (res[0],res[1],res[2])
+
+				process_count += 1
+			except Exception as e:
+				print e.message
 				continue
-			tr.calc_preference(approach)
-			'''
-			if approach == 1:
-				H_pref = calc_H_pref(all_dicts)
-				tr.set_freq_pref(H_pref)
-			'''
-			keywords = tr.textrank(newsdict,topK=topK,method=approach)
-			print " ".join(keywords)
+	else:
+		f = codecs.open('all_news_keywords.txt','w',encoding='utf-8')
+		for newsdict in js_gen:
+			try:
+				tr=TextRank()
+				ret = tr.calc_wordpairs(newsdict)
+				if not ret:
+					continue
+				tr.calc_preference(approach)
 
-			if newsdict.has_key('KEYWORDS') and newsdict['KEYWORDS']:
-				res = evaluate(newsdict,keywords,newsdict['KEYWORDS'])
-				eval_result.append(res)
-				print "precision : %f \t recall : %f \t f : %f\n" % (res[0],res[1],res[2])
+				'''
+				if approach == 1:
+					H_pref = calc_H_pref(all_dicts)
+					tr.set_freq_pref(H_pref)
+				'''
+				keywords = tr.textrank(newsdict,topK=topK,method=approach)
+				if keywords:
+					keywords_list.append(keywords)
+					#print " ".join(keywords)
+					#f.write(" ".join(keywords))
+					#f.write('\n')
 
-			process_count += 1
-		except Exception as e:
-			print e.message
-			continue
+				'''
+				if newsdict.has_key('KEYWORDS') and newsdict['KEYWORDS']:
+					res = evaluate(newsdict,keywords,newsdict['KEYWORDS'])
+					eval_result.append(res)
+					print "precision : %f \t recall : %f \t f : %f\n" % (res[0],res[1],res[2])
+				'''
 
+				process_count += 1
+			except Exception as e:
+				print e.message
+				continue
+		f.close()
+
+	#all keywords in keywords_list now
+
+	'''
+	kmeans_obj = vector_clustering.kmean_clustering('/home/lc/ht_work/data/200_0_0_1/news.model',keywords_list,cluster_num,iter_max)
+	cents,clusterAssment = kmeans_obj.clustering()
+	kmeans_obj.print_cluster_nearest_words('/home/lc/ht_work/data/w2v_cluster.txt',clusterAssment,prt_num)
+	'''
+
+
+	kmeans_obj = vector_clustering.kmean_sklearn_clustering('/home/lc/ht_work/data/200_0_0_1/news.model',keywords_list,step=10)
+	kmeans_obj.clustering(115)
+
+
+	'''
+	h_obj = vector_clustering.hierarchy_clustering('/home/lc/ht_work/data/200_0_0_1/news.model',keywords_list)
+	# through small samples test : 0.8 is best .值越大，类内含义范围越广泛
+	cluster_labels = h_obj.clustering(0.75)
+	#h_obj.print_cluster_words('/home/lc/ht_work/news_textrank/hcluster_res.txt',cluster_labels,10)
+	'''
+
+	'''
 	print "process %Ld files , %Ld files with keywords to evaluate\n" % (process_count,len(eval_result))
 	final_res = calc_eval_result(eval_result)
 	print "final result ==> precision : %f \t recall : %f \t f : %f\n" % (final_res[0],final_res[1],final_res[2])
+	'''
 
 
