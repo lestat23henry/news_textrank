@@ -15,7 +15,9 @@ import gensim.models.word2vec as w2v
 from collections import Counter
 from multiprocessing import cpu_count
 
-import vector_clustering
+import sqlite3
+
+#import vector_clustering
 
 CORPORA_PATH = '/home/lc/ht_work/data/all_news_5_bak'
 TMPWORDFILE = '/tmp/tmpwords'
@@ -477,7 +479,7 @@ class w2v_extract():
 		lprob = -sum(np.logaddexp(0, -dot) + oword.code * dot)
 		return lprob
 
-	def keywords(self,newsdict,topK=10):
+	def keywords_dict(self,newsdict,topK=10):
 		wordlist = []
 		first = newsdict.get('FIRST_SENTENCE',"")
 		last = newsdict.get('LAST_SENTENCE',"")
@@ -510,6 +512,56 @@ def preprocess(srcdir):
 					text = fr.read()
 					yield json.loads(text, strict=False)
 	return
+
+def split_to_wordpairs(str):
+
+
+def process_raw_news(title,content):
+	news_dict = {}
+	first = None
+	last = None
+	mid = None
+
+	news_dict['TITLE'] = split_to_wordpairs(title)
+	newsdict['FIRST_SENTENCE'] = None
+	newsdict['MID_SENTENCE'] = None
+	newsdict['LAST_SENTENCE'] = None
+
+	if content:
+		first
+
+
+	return news_dict
+
+def dycj_sqlite_preprocess(dblist,tablelist):
+	if dblist:
+		for index,db in enumerate(dblist):
+			try:
+				tablename = tablelist[index]
+				conn = sqlite3.connect(db)
+				print 'db %s connect ok' % db
+				c = conn.cursor()
+				stmt = '''
+						select title,content from %s where 
+						publish_date > datetime('2017-01-01') 
+						and publish_date < datetime('2017-12-31');
+						''' % tablename
+				c.execute(stmt)
+				for row in c:
+					title = row[0]
+					content = row[1]
+					newsdict = process_raw_news(title,content)
+					yield newsdict
+
+			except Exception,e:
+				print e.message
+				continue
+			finally:
+				conn.close()
+
+
+
+
 
 
 
@@ -653,7 +705,7 @@ if __name__=="__main__":
 		js_gen_1 = preprocess(CORPORA_PATH)
 		for newsdict in js_gen_1:
 			try:
-				keywords = w2v_new.keywords(newsdict,topK=topK)
+				keywords = w2v_new.keywords_dict(newsdict,topK=topK)
 				print " ".join(keywords)
 
 				if newsdict.has_key('KEYWORDS') and newsdict['KEYWORDS']:
@@ -707,10 +759,12 @@ if __name__=="__main__":
 	cents,clusterAssment = kmeans_obj.clustering()
 	kmeans_obj.print_cluster_nearest_words('/home/lc/ht_work/data/w2v_cluster.txt',clusterAssment,prt_num)
 	'''
-
-
+	'''
 	kmeans_obj = vector_clustering.kmean_sklearn_clustering('/home/lc/ht_work/data/200_0_0_1/news.model',keywords_list,step=10)
 	kmeans_obj.clustering(115)
+	'''
+
+
 
 
 	'''
