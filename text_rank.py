@@ -16,6 +16,7 @@ from collections import Counter
 from multiprocessing import cpu_count
 
 import sqlite3
+import split_word
 
 #import vector_clustering
 
@@ -513,22 +514,36 @@ def preprocess(srcdir):
 					yield json.loads(text, strict=False)
 	return
 
-def split_to_wordpairs(str):
-
-
-def process_raw_news(title,content):
+def process_raw_news(ds,title,content):
 	news_dict = {}
-	first = None
 	last = None
 	mid = None
 
-	news_dict['TITLE'] = split_to_wordpairs(title)
-	newsdict['FIRST_SENTENCE'] = None
+	news_dict['TITLE'] = ds.split_one_string(title)
+
+
+
+	newsdict['FIRST_SENTENCE'] = ds.split_one_string(title)
 	newsdict['MID_SENTENCE'] = None
 	newsdict['LAST_SENTENCE'] = None
 
 	if content:
-		first
+		if content.find([u'。',u'！',u'？',u'.',u'!',u'?']) == -1:
+			first = content
+		else:
+			rest = content[content.find([u'。',u'！',u'？',u'.',u'!',u'?'])]
+			if rest.rfind([u'。',u'！',u'？',u'.',u'!',u'?']) == -1:
+				last = rest
+			else:
+				restrest = rest[:rest.rfind([u'。',u'！',u'？',u'.',u'!',u'?'])]
+				if restrest.rfind([u'。',u'！',u'？',u'.',u'!',u'?']) == -1:
+					last = restrest
+				else:
+					mid =
+
+
+
+		first = content[:content.find()]
 
 
 	return news_dict
@@ -679,6 +694,7 @@ if __name__=="__main__":
 	newsdict['KEYWORDS'] = ['净利','股权','股东','基本面','胡扯']
 	#u'TITLE', u'URL', u'LAST_SENTENCE', u'OBJECT_ID', u'FIRST_SENTENCE', u'SOURCE', u'MID_SENTENCE', u'DATE', u'KEYWORDS', u'SECTIONS'
 	'''
+	ds = split_word.doc_splitter('/home/lc/ht_work/ML/old_txt','/home/lc/ht_work/ML/new_txt/allwords.txt','/home/lc/ht_word/xwparse/stopwords_merge.txt','/home/lc/ht_work/xwparse/userdict.txt',True)
 
 	approach = 0
 	topK = 5
@@ -694,7 +710,7 @@ if __name__=="__main__":
 	if approach == 2:
 		UndirectWeightedGraph.set_model(MODEL_PATH)
 
-	js_gen = preprocess(CORPORA_PATH)
+	newsdict_gen = preprocess(CORPORA_PATH)
 
 	keywords_list = []
 
@@ -702,8 +718,9 @@ if __name__=="__main__":
 		w2v_new = w2v_extract(TMPWORDFILE)
 		#w2v_new.pre_train(js_gen)
 		w2v_new.train_model(MODELPATH_3,retrain=False)
-		js_gen_1 = preprocess(CORPORA_PATH)
-		for newsdict in js_gen_1:
+		#newsdict_gen_1 = preprocess(CORPORA_PATH)
+		newsdict_gen_dycj =
+		for newsdict in newsdict_gen_1:
 			try:
 				keywords = w2v_new.keywords_dict(newsdict,topK=topK)
 				print " ".join(keywords)

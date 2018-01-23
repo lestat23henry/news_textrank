@@ -54,6 +54,8 @@ class doc_splitter():
 		return filepath_utf8
 
 	def split_one_string(self,str):
+		if not str:
+			return None
 		try:
 			outstr = u""
 			line_str = str.strip()
