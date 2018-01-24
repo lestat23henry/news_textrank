@@ -514,59 +514,25 @@ def preprocess(srcdir):
 					yield json.loads(text, strict=False)
 	return
 
-def process_raw_news(ds,title,content):
-	news_dict = {}
-	last = None
-	mid = None
-
-	news_dict['TITLE'] = ds.split_one_string(title)
-
-
-
-	newsdict['FIRST_SENTENCE'] = ds.split_one_string(title)
-	newsdict['MID_SENTENCE'] = None
-	newsdict['LAST_SENTENCE'] = None
-
-	if content:
-		if content.find([u'。',u'！',u'？',u'.',u'!',u'?']) == -1:
-			first = content
-		else:
-			rest = content[content.find([u'。',u'！',u'？',u'.',u'!',u'?'])]
-			if rest.rfind([u'。',u'！',u'？',u'.',u'!',u'?']) == -1:
-				last = rest
-			else:
-				restrest = rest[:rest.rfind([u'。',u'！',u'？',u'.',u'!',u'?'])]
-				if restrest.rfind([u'。',u'！',u'？',u'.',u'!',u'?']) == -1:
-					last = restrest
-				else:
-					mid =
-
-
-
-		first = content[:content.find()]
-
-
-	return news_dict
-
-def dycj_sqlite_preprocess(dblist,tablelist):
-	if dblist:
-		for index,db in enumerate(dblist):
+def dycj_sqlite_preprocess(dbdict,splitter):
+	if dbdict and ds:
+		for db,tablist in dbdict.items():
 			try:
-				tablename = tablelist[index]
-				conn = sqlite3.connect(db)
-				print 'db %s connect ok' % db
-				c = conn.cursor()
-				stmt = '''
+				for tabname in tablist:
+					conn = sqlite3.connect(db)
+					print 'db %s connect ok' % db
+					c = conn.cursor()
+					stmt = '''
 						select title,content from %s where 
 						publish_date > datetime('2017-01-01') 
 						and publish_date < datetime('2017-12-31');
-						''' % tablename
-				c.execute(stmt)
-				for row in c:
-					title = row[0]
-					content = row[1]
-					newsdict = process_raw_news(title,content)
-					yield newsdict
+						''' % tabname
+					c.execute(stmt)
+					for row in c:
+						news_dict = {}
+						news_dict['TITLE'] = splitter.split_one_string(row[0])
+						news_dict['MID_SENTENCE'] = splitter.split_one_string(row[1])
+						yield news_dict
 
 			except Exception,e:
 				print e.message
@@ -574,11 +540,7 @@ def dycj_sqlite_preprocess(dblist,tablelist):
 			finally:
 				conn.close()
 
-
-
-
-
-
+	return None
 
 def evaluate(newsdict,keywords,target_keywords):
 	first = newsdict.get('FIRST_SENTENCE',"")
@@ -712,14 +674,21 @@ if __name__=="__main__":
 
 	newsdict_gen = preprocess(CORPORA_PATH)
 
+	# construct dycj db info
+	dycj_dbs = {}
+	dycj_dbs['']
+
+
+	newsdict_gen_dycj = dycj_sqlite_preprocess(dbdict=dycj_dbs,splitter=ds)
+
 	keywords_list = []
 
 	if approach == 3:
 		w2v_new = w2v_extract(TMPWORDFILE)
 		#w2v_new.pre_train(js_gen)
 		w2v_new.train_model(MODELPATH_3,retrain=False)
-		#newsdict_gen_1 = preprocess(CORPORA_PATH)
-		newsdict_gen_dycj =
+		newsdict_gen_1 = preprocess(CORPORA_PATH)
+
 		for newsdict in newsdict_gen_1:
 			try:
 				keywords = w2v_new.keywords_dict(newsdict,topK=topK)
@@ -736,7 +705,7 @@ if __name__=="__main__":
 				continue
 	else:
 		f = codecs.open('all_news_keywords.txt','w',encoding='utf-8')
-		for newsdict in js_gen:
+		for newsdict in newsdict_gen_dycj:
 			try:
 				tr=TextRank()
 				ret = tr.calc_wordpairs(newsdict)
