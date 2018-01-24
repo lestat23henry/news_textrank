@@ -256,6 +256,8 @@ class TextRank():
 	pos_legal = ("n","ns","nt","nz","a","an","vn","i","I","j")
 	stop_words = []
 
+	all_words_with_pos = {}
+
 	def __init__(self):
 		self.span = 5
 
@@ -302,6 +304,8 @@ class TextRank():
 				if len(pair.split("/")) == 2:
 					term,pos = pair.split("/")
 					title.append(term)
+					if term not in TextRank.all_words_with_pos:
+						TextRank.all_words_with_pos[term] = pos
 			title_str = "".join(title)
 
 		for pair in whole_text.split(' '):
@@ -322,6 +326,8 @@ class TextRank():
 						term_info['title'] = True
 					else:
 						term_info['title'] = False
+					if term not in TextRank.all_words_with_pos:
+						TextRank.all_words_with_pos[term] = pos
 					self.wordpairs.append((term,term_info))
 					self.words.append(term)
 		return True
@@ -375,11 +381,11 @@ class TextRank():
 	def _get_pos_preference(self,pos):
 		#根据不同的词性给予词汇不同的分数，分数来源参考"基于语义的中文文本关键词提取算法"
 		s=0.1
-		if pos[0]=="n":
+		if pos[0]==("n"):
 			s=0.8
 		elif pos=="j":
 			s=0.7
-		elif pos in ("an","i","I","vn"):
+		elif pos in ("an","i","I","vn","vd","v"):
 			s=0.6
 		elif pos in ("eng","a"):
 			s=0.5
@@ -534,13 +540,16 @@ def dycj_sqlite_preprocess(dbdict,splitter):
 						news_dict['MID_SENTENCE'] = splitter.split_one_string(row[1])
 						yield news_dict
 
+					conn.close()
+					conn = None
 			except Exception,e:
 				print e.message
 				continue
 			finally:
-				conn.close()
+				if conn:
+					conn.close()
 
-	return None
+	return
 
 def evaluate(newsdict,keywords,target_keywords):
 	first = newsdict.get('FIRST_SENTENCE',"")
@@ -656,10 +665,11 @@ if __name__=="__main__":
 	newsdict['KEYWORDS'] = ['净利','股权','股东','基本面','胡扯']
 	#u'TITLE', u'URL', u'LAST_SENTENCE', u'OBJECT_ID', u'FIRST_SENTENCE', u'SOURCE', u'MID_SENTENCE', u'DATE', u'KEYWORDS', u'SECTIONS'
 	'''
-	ds = split_word.doc_splitter('/home/lc/ht_work/ML/old_txt','/home/lc/ht_work/ML/new_txt/allwords.txt','/home/lc/ht_word/xwparse/stopwords_merge.txt','/home/lc/ht_work/xwparse/userdict.txt',True)
+	ds = split_word.doc_splitter(None,None,'/home/lc/ht_word/data/sentiment_dict/stopwords_wz.txt','/home/lc/ht_work/data/sentiment_dict/userdict_wz_addsent.txt',True)
+	#ds = split_word.doc_splitter(None,None,None,None,True)
 
 	approach = 0
-	topK = 5
+	topK = 10
 	process_count = 0
 	eval_result = []
 
@@ -668,15 +678,20 @@ if __name__=="__main__":
 	iter_max = 30
 	prt_num = 2
 
-	TextRank.set_stopwords('/home/lc/ht_work/news_textrank/stopwords_wz.txt')
+	TextRank.set_stopwords('/home/lc/ht_work/data/sentiment_dict/stopwords_wz.txt')
 	if approach == 2:
 		UndirectWeightedGraph.set_model(MODEL_PATH)
 
-	newsdict_gen = preprocess(CORPORA_PATH)
+	#newsdict_gen = preprocess(CORPORA_PATH)
 
 	# construct dycj db info
 	dycj_dbs = {}
-	dycj_dbs['']
+	dycj_dbs['/home/lc/ht_work/data/diyicaijing/bondpositivenews.sqlite'] = ['bond_positive_news']
+	dycj_dbs['/home/lc/ht_work/data/diyicaijing/fundpositivenews.sqlite'] = ['fund_positive_news']
+	dycj_dbs['/home/lc/ht_work/data/diyicaijing/futurespositivenews.sqlite'] = ['futures_positive_news']
+	dycj_dbs['/home/lc/ht_work/data/diyicaijing/industrypositivenews.sqlite'] = ['industry_positive_news']
+	dycj_dbs['/home/lc/ht_work/data/diyicaijing/macropositivenews.sqlite'] = ['macro_positive_news']
+	dycj_dbs['/home/lc/ht_work/data/diyicaijing/stockpositivenews.sqlite'] = ['stock_positive_news']
 
 
 	newsdict_gen_dycj = dycj_sqlite_preprocess(dbdict=dycj_dbs,splitter=ds)
@@ -704,7 +719,6 @@ if __name__=="__main__":
 				print e.message
 				continue
 	else:
-		f = codecs.open('all_news_keywords.txt','w',encoding='utf-8')
 		for newsdict in newsdict_gen_dycj:
 			try:
 				tr=TextRank()
@@ -720,8 +734,8 @@ if __name__=="__main__":
 				'''
 				keywords = tr.textrank(newsdict,topK=topK,method=approach)
 				if keywords:
-					keywords_list.append(keywords)
-					#print " ".join(keywords)
+					keywords_list.extend(keywords)
+					print " ".join(keywords)
 					#f.write(" ".join(keywords))
 					#f.write('\n')
 
@@ -736,10 +750,17 @@ if __name__=="__main__":
 			except Exception as e:
 				print e.message
 				continue
-		f.close()
 
-	#all keywords in keywords_list now
+	#all keywords in keywords_list now , words->pos stores in TextRank.all_words_with_pos
+	kw_set = set(keywords_list)
+	print 'we got %d keywords ' % len(kw_set)
+	f = codecs.open('all_news_keywords.txt','w',encoding='utf-8')
+	for kw in kw_set:
+		kw_pos = TextRank.all_words_with_pos[kw]
+		pair_str = kw + u' ' + kw_pos + '\n'
+		f.write(pair_str)
 
+	f.close()
 	'''
 	kmeans_obj = vector_clustering.kmean_clustering('/home/lc/ht_work/data/200_0_0_1/news.model',keywords_list,cluster_num,iter_max)
 	cents,clusterAssment = kmeans_obj.clustering()
